@@ -36,6 +36,17 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - org.idpf.epub-container
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: org.idpf.epub-container
+            UTTypeDescription: EPUB Publication
+            UTTypeConformsTo:
+              - public.data
+              - public.composite-content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - epub
+              public.mime-type:
+                - application/epub+zip
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zhang.tingshu
