@@ -1,0 +1,5 @@
+build/
+Payload/
+*.ipa
+TingShu.xcodeproj/
+.DS_Store
