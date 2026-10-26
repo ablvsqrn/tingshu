@@ -170,10 +170,11 @@ final class PlayerController: NSObject, ObservableObject {
 
         let text = sentences[currentSentence]
         statusText = ""
-        fetchAudio(for: text) { [weak self] data in
+        fetchAudio(for: text, announce: true) { [weak self] data in
             guard let self = self, self.generation == myGeneration else { return }
             DispatchQueue.main.async {
                 if let data = data {
+                    self.statusText = ""
                     self.playData(data, generation: myGeneration)
                 } else {
                     self.speakWithSystemVoice(text)
@@ -183,17 +184,37 @@ final class PlayerController: NSObject, ObservableObject {
                 self.prefetchNext()
             }
         }
+        // Watchdog: a stalled fetch must never leave a tap unanswered. If no
+        // audio has started for this generation within 8s, discard the late
+        // result (generation bump) and read the sentence with the system voice.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self, self.generation == myGeneration,
+                  self.player?.isPlaying != true, !self.synthesizer.isSpeaking else { return }
+            self.generation += 1
+            self.statusText = "网络合成超时，已切换到系统语音"
+            self.speakWithSystemVoice(text)
+            self.isPlaying = true
+            self.updateNowPlaying()
+        }
     }
 
-    private func fetchAudio(for text: String, completion: @escaping (Data?) -> Void) {
+    private func fetchAudio(for text: String, announce: Bool = false,
+                            completion: @escaping (Data?) -> Void) {
         let key = voice + "|" + String(ratePercent) + "|" + text
         if let cached = audioCache[key] { completion(cached); return }
         if azureKey.trimmingCharacters(in: .whitespaces).isEmpty {
-            DispatchQueue.main.async { [weak self] in
-                self?.statusText = "还没填 Azure 密钥（设置页填入），先用系统语音"
+            if announce {
+                DispatchQueue.main.async { [weak self] in
+                    self?.statusText = "还没填 Azure 密钥（设置页填入），先用系统语音"
+                }
             }
             completion(nil)
             return
+        }
+        if announce {
+            DispatchQueue.main.async { [weak self] in
+                self?.statusText = "正在合成语音…"
+            }
         }
         let client = AzureSpeechClient(region: azureRegion, apiKey: azureKey)
         client.synthesize(text: text, voice: voice, ratePercent: ratePercent) { [weak self] result in
@@ -202,8 +223,10 @@ final class PlayerController: NSObject, ObservableObject {
                 self?.audioCache[key] = data
                 completion(data)
             case .failure(let error):
-                DispatchQueue.main.async {
-                    self?.statusText = "Azure 合成失败（\(error.localizedDescription)），先用系统语音"
+                if announce {
+                    DispatchQueue.main.async {
+                        self?.statusText = "Azure 合成失败（\(error.localizedDescription)），先用系统语音"
+                    }
                 }
                 completion(nil)
             }
