@@ -7,12 +7,42 @@ struct ContentView: View {
     @State private var showImporter = false
     @State private var showSettings = false
     @State private var importError: String?
+    @State private var importing = false
+
+    private var importTypes: [UTType] {
+        var types: [UTType] = []
+        types.append(UTType(importedAs: "org.idpf.epub-container"))
+        if let byExt = UTType(filenameExtension: "epub") { types.append(byExt) }
+        types.append(.item)
+        return types
+    }
+
+    private func importFrom(_ url: URL) {
+        importing = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try library.importBook(from: url)
+                DispatchQueue.main.async { importing = false }
+            } catch {
+                DispatchQueue.main.async {
+                    importing = false
+                    importError = error.localizedDescription
+                }
+            }
+        }
+    }
 
     var body: some View {
         NavigationView {
             List {
-                if library.books.isEmpty {
-                    Text("还没有书。点右上角 + 导入一本 EPUB 开始听书。")
+                if importing {
+                    HStack {
+                        ProgressView()
+                        Text("正在导入…").foregroundColor(.secondary)
+                    }
+                }
+                if library.books.isEmpty && !importing {
+                    Text("还没有书。三种导入方式：① 点右上角 + 选 EPUB；② 在「文件」App 里长按 EPUB 选「用听书打开」；③ 把 EPUB 放进「文件 → 我的 iPhone → 听书」文件夹，重开 App 自动导入。")
                         .foregroundColor(.secondary)
                 }
                 ForEach(library.books) { book in
@@ -41,39 +71,39 @@ struct ContentView: View {
                 }
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [UTType(importedAs: "org.idpf.epub-container"), .item],
-                          allowsMultipleSelection: false) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        do {
-                            _ = try library.importBook(from: url)
-                        } catch {
-                            DispatchQueue.main.async { importError = error.localizedDescription }
-                        }
-                    }
-                }
-            }
-            .alert(item: Binding(
-                get: { importError.map { ImportError(message: $0) } },
-                set: { importError = $0?.message }
-            )) { item in
-                Alert(title: Text("导入失败"), message: Text(item.message),
-                      dismissButton: .default(Text("好")))
-            }
         }
         .navigationViewStyle(.stack)
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: importTypes,
+                      allowsMultipleSelection: false) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    importFrom(url)
+                } else {
+                    importError = "没有拿到所选文件。请再试一次，或把 EPUB 放进「文件」App 的听书文件夹后重开 App 自动导入。"
+                }
+            case .failure(let error):
+                importError = "选择文件失败：" + error.localizedDescription
+            }
+        }
+        .onOpenURL { url in importFrom(url) }
+        .alert(isPresented: Binding(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Alert(title: Text("导入失败"), message: Text(importError ?? ""),
+                  dismissButton: .default(Text("好")))
+        }
         .onAppear {
             player.onProgress = { [weak library] id, chapter, sentence in
                 library?.updateProgress(bookID: id, chapter: chapter, sentence: sentence)
             }
+            if let err = library.importLooseEPUBs(), importError == nil {
+                importError = err
+            }
         }
     }
-}
-
-private struct ImportError: Identifiable {
-    let id = UUID()
-    let message: String
 }
 
 struct SettingsView: View {

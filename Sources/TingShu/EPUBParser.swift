@@ -14,18 +14,29 @@ enum EPUBParser {
         try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: workDir) }
 
-        try fm.unzipItem(at: epubURL, to: workDir)
+        do {
+            try fm.unzipItem(at: epubURL, to: workDir)
+        } catch {
+            throw NSError(domain: "EPUBParser", code: 10,
+                          userInfo: [NSLocalizedDescriptionKey: "解压 EPUB 失败：\(error.localizedDescription)"])
+        }
 
         // 1. container.xml -> OPF path
         let containerURL = workDir.appendingPathComponent("META-INF/container.xml")
-        let containerXML = try String(contentsOf: containerURL, encoding: .utf8)
+        guard let containerXML = try? String(contentsOf: containerURL, encoding: .utf8) else {
+            throw NSError(domain: "EPUBParser", code: 11,
+                          userInfo: [NSLocalizedDescriptionKey: "读不到 META-INF/container.xml，可能不是标准 EPUB（或是加密/DRM 书）"])
+        }
         guard let opfRelative = ContainerParser(opfPathIn: containerXML) else {
             throw NSError(domain: "EPUBParser", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "container.xml 里找不到 OPF"])
         }
         let opfURL = workDir.appendingPathComponent(opfRelative)
         let opfDir = opfURL.deletingLastPathComponent()
-        let opfXML = try String(contentsOf: opfURL, encoding: .utf8)
+        guard let opfXML = try? String(contentsOf: opfURL, encoding: .utf8) else {
+            throw NSError(domain: "EPUBParser", code: 12,
+                          userInfo: [NSLocalizedDescriptionKey: "读不到 OPF 文件：\(opfRelative)"])
+        }
         let opf = OPFParser(xml: opfXML)
 
         // 2. optional NCX toc for nicer chapter titles

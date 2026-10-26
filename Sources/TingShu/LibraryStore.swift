@@ -54,6 +54,32 @@ final class LibraryStore: ObservableObject {
         return meta
     }
 
+    /// Picker-free import path: EPUBs the user dropped into the app's Files
+    /// folder (Documents root or Documents/Inbox, visible because file
+    /// sharing is enabled) are imported automatically on launch.
+    /// Returns the first error encountered, if any.
+    func importLooseEPUBs() -> String? {
+        let defaultsKey = "looseImportedNames"
+        var done = Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
+        var firstError: String?
+        let dirs = [documentsDir, documentsDir.appendingPathComponent("Inbox", isDirectory: true)]
+        for dir in dirs {
+            let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+            for url in items where url.pathExtension.lowercased() == "epub" {
+                if done.contains(url.lastPathComponent) { continue }
+                do {
+                    _ = try importBook(from: url)
+                    done.insert(url.lastPathComponent)
+                    try? fm.removeItem(at: url)
+                } catch {
+                    if firstError == nil { firstError = error.localizedDescription }
+                }
+            }
+        }
+        UserDefaults.standard.set(Array(done), forKey: defaultsKey)
+        return firstError
+    }
+
     func loadContent(for book: BookMeta) -> BookContent? {
         guard let data = try? Data(contentsOf: contentURL(for: book)) else { return nil }
         return try? JSONDecoder().decode(BookContent.self, from: data)
