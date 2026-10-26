@@ -7,6 +7,7 @@ struct ReaderView: View {
     @State private var content: BookContent?
     @State private var showChapters = false
     @State private var showPlayerPanel = false
+    @State private var showMiniPlayer = false
 
     private var currentChapterSentences: [String] {
         guard let content = content,
@@ -15,14 +16,20 @@ struct ReaderView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let content = content {
-                chapterHeader(content)
-                sentenceList
-                playerBar(content)
-            } else {
-                ProgressView("正在解析 EPUB…")
-                    .padding()
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                if let content = content {
+                    chapterHeader(content)
+                    sentenceList
+                } else {
+                    ProgressView("正在解析 EPUB…")
+                        .padding()
+                }
+            }
+            if content != nil {
+                floatingControls
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 18)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -83,6 +90,7 @@ struct ReaderView: View {
                             .lineSpacing(9)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 2)
+                            .contentShape(Rectangle())
                             .background(
                                 pair.offset == player.currentSentence && player.currentBookID == book.id
                                     ? Color.accentColor.opacity(0.16)
@@ -101,33 +109,61 @@ struct ReaderView: View {
         }
     }
 
-    private func playerBar(_ content: BookContent) -> some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 28) {
-                Button { player.previousChapter() } label: { Image(systemName: "backward.end.fill") }
-                Button { player.previousSentence() } label: { Image(systemName: "backward.fill") }
+    /// Readest-style floating listening control: a small round button at the
+    /// bottom-trailing corner. Tapping it starts playback and expands it into
+    /// a floating capsule with transport controls; the slider button opens the
+    /// full 听书 panel (voice / speed / sleep timer / Azure key).
+    @ViewBuilder
+    private var floatingControls: some View {
+        if showMiniPlayer {
+            HStack(spacing: 18) {
+                Button { player.previousSentence() } label: {
+                    Image(systemName: "backward.fill")
+                }
                 Button {
                     player.isPlaying ? player.pause() : player.play()
                 } label: {
-                    Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 44))
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 25))
                 }
-                Button { player.nextSentence() } label: { Image(systemName: "forward.fill") }
-                Button { player.nextChapter() } label: { Image(systemName: "forward.end.fill") }
+                Button { player.nextSentence() } label: {
+                    Image(systemName: "forward.fill")
+                }
+                Divider().frame(height: 22)
+                Button { showPlayerPanel = true } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showMiniPlayer = false }
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
             }
-            .font(.system(size: 20))
-            Button { showPlayerPanel = true } label: {
-                Label("听书", systemImage: "headphones")
-                    .font(.system(size: 17, weight: .semibold))
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 9)
-                    .background(Color.accentColor)
+            .font(.system(size: 18))
+            .foregroundColor(.primary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 13)
+            .background(
+                Capsule()
+                    .fill(Color(UIColor.secondarySystemBackground))
+                    .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 4)
+            )
+            .transition(.scale(scale: 0.85, anchor: .bottomTrailing).combined(with: .opacity))
+        } else {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { showMiniPlayer = true }
+                if !player.isPlaying { player.play() }
+            } label: {
+                Image(systemName: player.isPlaying ? "waveform" : "headphones")
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.white)
-                    .cornerRadius(20)
+                    .frame(width: 52, height: 52)
+                    .background(Color.accentColor)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
             }
+            .transition(.scale(scale: 0.85).combined(with: .opacity))
         }
-        .padding(.vertical, 10)
-        .background(Color(UIColor.secondarySystemBackground))
     }
 
     private func loadIfNeeded() {
