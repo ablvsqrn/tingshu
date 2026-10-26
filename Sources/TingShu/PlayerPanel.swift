@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The listening panel opened by the big 听书 button.
+/// The full listening panel, opened from the floating mini player's
+/// settings (slider) button.
 /// Deliberately minimal — model on iReadNote's player: transport controls,
 /// the current sentence, then three choices: 读书人 (voice), 语速 (speed),
 /// 定时关闭 (sleep timer). Changing voice/speed re-speaks the current
