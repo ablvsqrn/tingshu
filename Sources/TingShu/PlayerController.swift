@@ -42,7 +42,7 @@ final class PlayerController: NSObject, ObservableObject {
     // sentences start instantly and replays/reopens cost no network at all.
     private let prefetchQueue = DispatchQueue(label: "tingshu.prefetch", qos: .utility)
     private var prefetchToken = 0
-    private let cacheLimitBytes = 500 * 1024 * 1024
+    private let cacheLimitBytes = 200 * 1024 * 1024
 
     private var cacheDir: URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -102,14 +102,22 @@ final class PlayerController: NSObject, ObservableObject {
         prefetchToken += 1
         let token = prefetchToken
         guard !azureKey.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        // Keep the next 20 sentences synthesized ahead, across chapter
+        // boundaries; called again at every sentence so the window rolls
+        // forward with playback for as long as there is network.
         var targets: [String] = []
-        let start = currentSentence + 1
-        if sentences.indices.contains(start) {
-            for i in start..<min(start + 5, sentences.count) { targets.append(sentences[i]) }
-        }
-        if let content = content, content.chapters.indices.contains(currentChapter + 1) {
-            let nextSentences = content.chapters[currentChapter + 1].sentences
-            for i in 0..<min(3, nextSentences.count) { targets.append(nextSentences[i]) }
+        if let content = content {
+            var chapter = currentChapter
+            var idx = currentSentence + 1
+            while targets.count < 20, content.chapters.indices.contains(chapter) {
+                let sents = content.chapters[chapter].sentences
+                while idx < sents.count, targets.count < 20 {
+                    targets.append(sents[idx])
+                    idx += 1
+                }
+                chapter += 1
+                idx = 0
+            }
         }
         guard !targets.isEmpty else { return }
         let voiceC = voice, rateC = ratePercent, keyC = azureKey, regionC = azureRegion

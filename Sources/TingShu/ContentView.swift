@@ -144,7 +144,7 @@ struct SettingsView: View {
                         player.clearAudioCache()
                         cacheSize = player.audioCacheSizeText()
                     }
-                    Text("听书时会提前合成后面几句并存下来，下一句秒开、重听不花流量；缓存上限 500 MB，满了自动删最旧的。")
+                    Text("听书时会一直提前合成后面 20 句并存下来，下一句秒开、重听不花流量；缓存上限 200 MB，满了自动删最旧的。")
                         .font(.caption).foregroundColor(.secondary)
                 }
             }
