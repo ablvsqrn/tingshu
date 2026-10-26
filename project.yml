@@ -52,7 +52,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.zhang.tingshu
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: "AppIcon"
         ENABLE_PREVIEWS: "NO"
 schemes:
   TingShu:
