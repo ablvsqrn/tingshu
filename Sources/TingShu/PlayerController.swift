@@ -1,4 +1,5 @@
 import AVFoundation
+import CryptoKit
 import Foundation
 import MediaPlayer
 import SwiftUI
@@ -36,6 +37,107 @@ final class PlayerController: NSObject, ObservableObject {
     private var audioCache: [String: Data] = [:]
     private var generation = 0 // bumped on every stop/jump; stale fetches check it
 
+    // Pre-synthesis: a serial background queue keeps the next few sentences
+    // synthesized ahead of playback and persists them to a disk cache, so
+    // sentences start instantly and replays/reopens cost no network at all.
+    private let prefetchQueue = DispatchQueue(label: "tingshu.prefetch", qos: .utility)
+    private var prefetchToken = 0
+    private let cacheLimitBytes = 500 * 1024 * 1024
+
+    private var cacheDir: URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TTSAudio", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func cacheFileURL(for key: String) -> URL {
+        let digest = SHA256.hash(data: Data(key.utf8))
+        let name = digest.map { String(format: "%02x", $0) }.joined() + ".mp3"
+        return cacheDir.appendingPathComponent(name)
+    }
+
+    func audioCacheSizeText() -> String {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: cacheDir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        var total = 0
+        for f in files {
+            total += (try? f.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        }
+        if total <= 0 { return "0 MB" }
+        return String(format: "%.0f MB", Double(total) / 1_048_576.0)
+    }
+
+    func clearAudioCache() {
+        audioCache.removeAll()
+        try? FileManager.default.removeItem(at: cacheDir)
+    }
+
+    private func enforceCacheLimit() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(
+            at: cacheDir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
+        else { return }
+        var total = 0
+        var sized: [(url: URL, size: Int, date: Date)] = []
+        for f in files {
+            let v = try? f.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            let size = v?.fileSize ?? 0
+            total += size
+            sized.append((f, size, v?.contentModificationDate ?? .distantPast))
+        }
+        guard total > cacheLimitBytes else { return }
+        for item in sized.sorted(by: { $0.date < $1.date }) {
+            if total <= cacheLimitBytes { break }
+            try? fm.removeItem(at: item.url)
+            total -= item.size
+        }
+    }
+
+    /// Start pre-synthesizing from the current position without playing
+    /// (called when the listening panel opens).
+    func warmUp() { schedulePrefetch() }
+
+    private func schedulePrefetch() {
+        prefetchToken += 1
+        let token = prefetchToken
+        guard !azureKey.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        var targets: [String] = []
+        let start = currentSentence + 1
+        if sentences.indices.contains(start) {
+            for i in start..<min(start + 5, sentences.count) { targets.append(sentences[i]) }
+        }
+        if let content = content, content.chapters.indices.contains(currentChapter + 1) {
+            let nextSentences = content.chapters[currentChapter + 1].sentences
+            for i in 0..<min(3, nextSentences.count) { targets.append(nextSentences[i]) }
+        }
+        guard !targets.isEmpty else { return }
+        let voiceC = voice, rateC = ratePercent, keyC = azureKey, regionC = azureRegion
+        prefetchQueue.async { [weak self] in
+            guard let self = self else { return }
+            for text in targets {
+                if self.prefetchToken != token { return }
+                let key = voiceC + "|" + String(rateC) + "|" + text
+                var inMemory = false
+                DispatchQueue.main.sync { inMemory = self.audioCache[key] != nil }
+                if inMemory { continue }
+                let fileURL = self.cacheFileURL(for: key)
+                if FileManager.default.fileExists(atPath: fileURL.path) { continue }
+                let sem = DispatchSemaphore(value: 0)
+                AzureSpeechClient(region: regionC, apiKey: keyC)
+                    .synthesize(text: text, voice: voiceC, ratePercent: rateC) { result in
+                        if case .success(let data) = result {
+                            try? data.write(to: fileURL)
+                            self.enforceCacheLimit()
+                            DispatchQueue.main.async { self.audioCache[key] = data }
+                        }
+                        sem.signal()
+                    }
+                _ = sem.wait(timeout: .now() + 30)
+            }
+        }
+    }
+
     override init() {
         super.init()
         synthesizer.delegate = self
@@ -58,6 +160,7 @@ final class PlayerController: NSObject, ObservableObject {
             player?.play()
             isPlaying = true
             startSleepTimerIfNeeded()
+            schedulePrefetch()
             return
         }
         speakCurrent()
@@ -143,7 +246,6 @@ final class PlayerController: NSObject, ObservableObject {
         currentChapter = chapter
         sentences = content.chapters[chapter].sentences
         currentSentence = max(0, min(sentence, sentences.count - 1))
-        audioCache.removeAll()
         reportProgress()
         updateNowPlaying()
     }
@@ -181,7 +283,7 @@ final class PlayerController: NSObject, ObservableObject {
                 }
                 self.isPlaying = true
                 self.updateNowPlaying()
-                self.prefetchNext()
+                self.schedulePrefetch()
             }
         }
         // Watchdog: a stalled fetch must never leave a tap unanswered. If no
@@ -202,6 +304,11 @@ final class PlayerController: NSObject, ObservableObject {
                             completion: @escaping (Data?) -> Void) {
         let key = voice + "|" + String(ratePercent) + "|" + text
         if let cached = audioCache[key] { completion(cached); return }
+        if let disk = try? Data(contentsOf: cacheFileURL(for: key)), !disk.isEmpty {
+            audioCache[key] = disk
+            completion(disk)
+            return
+        }
         if azureKey.trimmingCharacters(in: .whitespaces).isEmpty {
             if announce {
                 DispatchQueue.main.async { [weak self] in
@@ -221,6 +328,13 @@ final class PlayerController: NSObject, ObservableObject {
             switch result {
             case .success(let data):
                 self?.audioCache[key] = data
+                if let self = self {
+                    let url = self.cacheFileURL(for: key)
+                    self.prefetchQueue.async {
+                        try? data.write(to: url)
+                        self.enforceCacheLimit()
+                    }
+                }
                 completion(data)
             case .failure(let error):
                 if announce {
@@ -231,12 +345,6 @@ final class PlayerController: NSObject, ObservableObject {
                 completion(nil)
             }
         }
-    }
-
-    private func prefetchNext() {
-        let next = currentSentence + 1
-        guard sentences.indices.contains(next) else { return }
-        fetchAudio(for: sentences[next]) { _ in }
     }
 
     private func playData(_ data: Data, generation gen: Int) {

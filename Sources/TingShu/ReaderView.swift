@@ -106,6 +106,18 @@ struct ReaderView: View {
             .onChange(of: player.currentSentence) { target in
                 withAnimation { proxy.scrollTo(target, anchor: .center) }
             }
+            .onAppear {
+                // Land on the sentence being read, not the top of the chapter.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if player.currentBookID == book.id {
+                        proxy.scrollTo(player.currentSentence, anchor: .center)
+                    }
+                }
+            }
+            .onChange(of: showPlayerPanel) { _ in
+                // Tapping 听书 re-centers the text on the spoken sentence.
+                withAnimation { proxy.scrollTo(player.currentSentence, anchor: .center) }
+            }
         }
     }
 

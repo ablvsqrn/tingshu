@@ -115,6 +115,7 @@ struct PlayerPanel: View {
             }
             .navigationTitle("听书")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear { player.warmUp() }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("完成") { presentationMode.wrappedValue.dismiss() }

@@ -111,7 +111,9 @@ struct SettingsView: View {
     @AppStorage("azureRegion") var azureRegion = "southeastasia"
     @AppStorage("voice") var voice = "zh-CN-XiaoxiaoNeural"
     @AppStorage("ratePercent") var ratePercent = 0
+    @EnvironmentObject var player: PlayerController
     @Environment(\.presentationMode) var presentationMode
+    @State private var cacheSize = ""
 
     var body: some View {
         NavigationView {
@@ -135,7 +137,18 @@ struct SettingsView: View {
                         Text(ratePercent >= 0 ? "+\(ratePercent)%" : "\(ratePercent)%")
                     }
                 }
+                Section(header: Text("语音缓存")) {
+                    Text("已预合成缓存：\(cacheSize)")
+                        .font(.caption).foregroundColor(.secondary)
+                    Button("清除语音缓存", role: .destructive) {
+                        player.clearAudioCache()
+                        cacheSize = player.audioCacheSizeText()
+                    }
+                    Text("听书时会提前合成后面几句并存下来，下一句秒开、重听不花流量；缓存上限 500 MB，满了自动删最旧的。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
             }
+            .onAppear { cacheSize = player.audioCacheSizeText() }
             .navigationTitle("设置")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
