@@ -33,7 +33,7 @@ final class AzureSpeechClient {
         request.setValue("application/ssml+xml", forHTTPHeaderField: "Content-Type")
         request.setValue("audio-24khz-96kbitrate-mono-mp3", forHTTPHeaderField: "X-Microsoft-OutputFormat")
         request.setValue("TingShu/1.0", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 12 // one sentence synthesizes in ~1-3s; a hung network must fall back fast, not hang half a minute
 
         let rate = ratePercent >= 0 ? "+\(ratePercent)%" : "\(ratePercent)%"
         let lang = voice.hasPrefix("zh-TW") ? "zh-TW" : (voice.hasPrefix("zh-HK") ? "zh-HK" : "zh-CN")
