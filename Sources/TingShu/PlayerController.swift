@@ -36,6 +36,8 @@ final class PlayerController: NSObject, ObservableObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var audioCache: [String: Data] = [:]
     private var generation = 0 // bumped on every stop/jump; stale fetches check it
+    private var interruptedWhilePlaying = false // set when another app steals the audio session mid-playback
+    private var sessionObservers: [NSObjectProtocol] = []
 
     // Pre-synthesis: a serial background queue keeps the next few sentences
     // synthesized ahead of playback and persists them to a disk cache, so
@@ -151,6 +153,7 @@ final class PlayerController: NSObject, ObservableObject {
         synthesizer.delegate = self
         configureAudioSession()
         configureRemoteCommands()
+        observeAudioSessionNotifications()
     }
 
     // MARK: - Public control
@@ -164,6 +167,7 @@ final class PlayerController: NSObject, ObservableObject {
 
     func play() {
         guard content != nil else { return }
+        configureAudioSession() // another app may have deactivated it while we were away
         if player != nil, player?.isPlaying == false, !isPlaying {
             player?.play()
             isPlaying = true
@@ -300,6 +304,11 @@ final class PlayerController: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             guard let self = self, self.generation == myGeneration,
                   self.player?.isPlaying != true, !self.synthesizer.isSpeaking else { return }
+            // One recovery attempt before the system voice: if a player is
+            // loaded but silent, the session was probably deactivated by an
+            // interruption — re-activate and retry instead of swapping voice.
+            self.configureAudioSession()
+            if let p = self.player, p.play() { return }
             self.generation += 1
             self.statusText = "网络合成超时，已切换到系统语音"
             self.speakWithSystemVoice(text)
@@ -357,11 +366,22 @@ final class PlayerController: NSObject, ObservableObject {
 
     private func playData(_ data: Data, generation gen: Int) {
         do {
+            // The session is only guaranteed active right after we activate
+            // it: another app (call, video, voice message) can deactivate it
+            // while we are backgrounded, and AVAudioPlayer then fails
+            // silently — no sound, no delegate error, playback just stalls.
+            configureAudioSession()
             let p = try AVAudioPlayer(data: data)
             p.delegate = self
             p.prepareToPlay()
             player = p
-            p.play()
+            if !p.play() {
+                configureAudioSession() // one re-activation retry before any fallback
+                if !p.play(), let text = sentences.indices.contains(currentSentence)
+                    ? sentences[currentSentence] : nil {
+                    speakWithSystemVoice(text)
+                }
+            }
         } catch {
             if let text = sentences.indices.contains(currentSentence) ? sentences[currentSentence] : nil {
                 speakWithSystemVoice(text)
@@ -402,6 +422,79 @@ final class PlayerController: NSObject, ObservableObject {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             try AVAudioSession.sharedInstance().setActive(true)
         } catch { /* device will surface it; keep the app usable */ }
+    }
+
+    // MARK: - Interruptions & foreground recovery
+
+    /// Cutting to another app and back used to kill playback: an app that
+    /// plays audio (call, video, voice message) interrupts and deactivates
+    /// our session; AVAudioPlayer then stops silently, its finish delegate
+    /// never fires, and nothing ever resumed — the user came back to a
+    /// stalled player that then tripped the 8s watchdog into swapping to
+    /// the system voice. These handlers close that hole.
+    private func observeAudioSessionNotifications() {
+        let nc = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        sessionObservers.append(nc.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: session, queue: .main
+        ) { [weak self] note in self?.handleInterruption(note) })
+        sessionObservers.append(nc.addObserver(
+            forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.handleMediaServicesReset() })
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            if isPlaying { interruptedWhilePlaying = true }
+        case .ended:
+            let optionsRaw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+            let shouldResume = AVAudioSession.InterruptionOptions(rawValue: optionsRaw).contains(.shouldResume)
+            if interruptedWhilePlaying, shouldResume {
+                interruptedWhilePlaying = false
+                resumeAfterInterruption()
+            }
+            // Without shouldResume, recovery happens on foreground via
+            // appBecameActive() when the user returns to the app.
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleMediaServicesReset() {
+        // Media server restarted: session config and remote-command targets
+        // were wiped. Rebuild them, and resume if we were mid-listen.
+        let wasPlaying = isPlaying || interruptedWhilePlaying
+        interruptedWhilePlaying = false
+        configureAudioSession()
+        configureRemoteCommands()
+        if wasPlaying { resumeAfterInterruption() }
+    }
+
+    /// Re-activate the session and keep the current sentence going: resume
+    /// the loaded player when possible, otherwise re-speak — the disk cache
+    /// makes the chosen Azure voice come back instantly, no system voice.
+    private func resumeAfterInterruption() {
+        guard isPlaying, content != nil else { return }
+        configureAudioSession()
+        if let p = player, !p.isPlaying, p.play() {
+            updateNowPlaying()
+            return
+        }
+        if synthesizer.isSpeaking { return }
+        player = nil
+        speakCurrent()
+    }
+
+    /// Called when the app returns to the foreground. If state says
+    /// "playing" but nothing is actually making sound, recover here
+    /// instead of sitting silent until the watchdog swaps the voice.
+    func appBecameActive() {
+        guard isPlaying, content != nil else { return }
+        if player?.isPlaying == true || synthesizer.isSpeaking { return }
+        resumeAfterInterruption()
     }
 
     private func configureRemoteCommands() {
