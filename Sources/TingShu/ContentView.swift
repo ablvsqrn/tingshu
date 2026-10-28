@@ -12,7 +12,12 @@ struct ContentView: View {
     private var importTypes: [UTType] {
         var types: [UTType] = []
         types.append(UTType(importedAs: "org.idpf.epub-container"))
-        if let byExt = UTType(filenameExtension: "epub") { types.append(byExt) }
+        types.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
+        for ext in ["epub", "docx"] {
+            if let byExt = UTType(filenameExtension: ext) { types.append(byExt) }
+        }
+        types.append(.plainText)
+        types.append(.pdf)
         types.append(.item)
         return types
     }
@@ -42,7 +47,7 @@ struct ContentView: View {
                     }
                 }
                 if library.books.isEmpty && !importing {
-                    Text("还没有书。三种导入方式：① 点右上角 + 选 EPUB；② 在「文件」App 里长按 EPUB 选「用听书打开」；③ 把 EPUB 放进「文件 → 我的 iPhone → 听书」文件夹，重开 App 自动导入。")
+                    Text("还没有书。支持 EPUB / TXT / PDF / Word(.docx)。三种导入方式：① 点右上角 + 选文件；② 在 Telegram 或「文件」App 里把书分享给「听书」；③ 把文件放进「文件 → 我的 iPhone → 听书」文件夹，重开 App 自动导入。")
                         .foregroundColor(.secondary)
                 }
                 ForEach(library.books) { book in
@@ -99,7 +104,7 @@ struct ContentView: View {
             player.onProgress = { [weak library] id, chapter, sentence in
                 library?.updateProgress(bookID: id, chapter: chapter, sentence: sentence)
             }
-            if let err = library.importLooseEPUBs(), importError == nil {
+            if let err = library.importLooseBooks(), importError == nil {
                 importError = err
             }
         }

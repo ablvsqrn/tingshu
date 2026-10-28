@@ -21,17 +21,19 @@ final class LibraryStore: ObservableObject {
     func epubURL(for book: BookMeta) -> URL { booksDir.appendingPathComponent(book.fileName) }
     func contentURL(for book: BookMeta) -> URL { booksDir.appendingPathComponent(book.id + ".json") }
 
-    /// Import an EPUB picked by the user: copy it in, parse it, cache the text.
+    /// Import a book file picked by the user (EPUB / TXT / PDF / Word):
+    /// copy it in, parse it by format, cache the text.
     func importBook(from pickedURL: URL) throws -> BookMeta {
         let scoped = pickedURL.startAccessingSecurityScopedResource()
         defer { if scoped { pickedURL.stopAccessingSecurityScopedResource() } }
 
         let id = UUID().uuidString
-        let fileName = id + ".epub"
+        let ext = pickedURL.pathExtension.lowercased()
+        let fileName = id + "." + (ext.isEmpty ? "bin" : ext)
         let dest = booksDir.appendingPathComponent(fileName)
         try fm.copyItem(at: pickedURL, to: dest)
 
-        let content = try EPUBParser.parse(epubURL: dest)
+        let content = try BookParser.parse(url: dest)
         let contentData = try JSONEncoder().encode(content)
         try contentData.write(to: booksDir.appendingPathComponent(id + ".json"))
 
@@ -54,18 +56,19 @@ final class LibraryStore: ObservableObject {
         return meta
     }
 
-    /// Picker-free import path: EPUBs the user dropped into the app's Files
-    /// folder (Documents root or Documents/Inbox, visible because file
-    /// sharing is enabled) are imported automatically on launch.
+    /// Picker-free import path: book files the user dropped into the app's
+    /// Files folder (Documents root or Documents/Inbox, visible because
+    /// file sharing is enabled) are imported automatically on launch.
     /// Returns the first error encountered, if any.
-    func importLooseEPUBs() -> String? {
+    func importLooseBooks() -> String? {
         let defaultsKey = "looseImportedNames"
+        let supportedExts: Set<String> = ["epub", "txt", "pdf", "docx"]
         var done = Set(UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
         var firstError: String?
         let dirs = [documentsDir, documentsDir.appendingPathComponent("Inbox", isDirectory: true)]
         for dir in dirs {
             let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-            for url in items where url.pathExtension.lowercased() == "epub" {
+            for url in items where supportedExts.contains(url.pathExtension.lowercased()) {
                 if done.contains(url.lastPathComponent) { continue }
                 do {
                     _ = try importBook(from: url)
