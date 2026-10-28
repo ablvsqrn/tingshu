@@ -36,6 +36,21 @@ targets:
             LSHandlerRank: Alternate
             LSItemContentTypes:
               - org.idpf.epub-container
+          - CFBundleTypeName: Text
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.plain-text
+          - CFBundleTypeName: PDF
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.adobe.pdf
+          - CFBundleTypeName: Word
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - org.openxmlformats.wordprocessingml.document
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: org.idpf.epub-container
             UTTypeDescription: EPUB Publication
@@ -47,6 +62,16 @@ targets:
                 - epub
               public.mime-type:
                 - application/epub+zip
+          - UTTypeIdentifier: org.openxmlformats.wordprocessingml.document
+            UTTypeDescription: Word Document
+            UTTypeConformsTo:
+              - public.data
+              - public.composite-content
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - docx
+              public.mime-type:
+                - application/vnd.openxmlformats-officedocument.wordprocessingml.document
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zhang.tingshu
