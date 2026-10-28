@@ -130,9 +130,10 @@ enum TXTBookParser {
             }
         }
         if let s = String(data: data, encoding: .utf8) { return s }
+        // GB_18030_2000 == CFStringEncoding 0x0632 (the kCFStringEncoding*
+        // C constant is not bridged into Swift under that name).
         let gb18030 = String.Encoding(rawValue:
-            CFStringConvertEncodingToNSStringEncoding(
-                CFStringEncoding(kCFStringEncodingGB_18030_2000)))
+            CFStringConvertEncodingToNSStringEncoding(0x0632))
         if let s = String(data: data, encoding: gb18030) { return s }
         if let s = String(data: data, encoding: .utf16) { return s }
         return nil
